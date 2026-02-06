@@ -151,7 +151,7 @@ with tab2:
         with c1:
             card_name = st.selectbox("카드", list(card_map.keys()), key="tx_card")
         with c2:
-            amount = st.number_input("금액", min_value=0, step=1000, value=0, key="tx_amount")
+            amount = st.number_input("금액", step=1000, value=0, key="tx_amount")
         with c3:
             d = st.date_input("날짜", value=today, key="tx_date")
         with c4:
@@ -159,8 +159,8 @@ with tab2:
 
         # 저장 버튼
         if st.button("추가", type="primary", use_container_width=True):
-            if amount <= 0:
-                st.warning("금액을 1원 이상 입력해 주세요.")
+            if amount == 0:
+                st.warning("금액을 0이 아닌 값으로 입력해 주세요.")
             else:
                 m = ym(d.replace(day=1))
                 if m not in months:
