@@ -57,6 +57,12 @@ def allowed_months(today: date):
     m_next = this_m + relativedelta(months=1)
     return [ym(m_prev), ym(this_m), ym(m_next)]
 
+def to_int_series(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(
+        series.astype(str).str.replace(",", "", regex=False).str.strip(),
+        errors="coerce",
+    ).fillna(0).astype(int)
+
 def cleanup_tx(tx_df: pd.DataFrame, allowed: list[str]) -> pd.DataFrame:
     if tx_df.empty:
         return tx_df
@@ -83,6 +89,10 @@ def get_month_end_info(month: str) -> tuple[date, bool, str]:
 
     return end_dt, (is_weekend or is_holiday), reason
 
+def status_icon(spent: int, effective_target: int) -> str:
+    # 고정비가 목표 이상인 경우 effective_target=0이므로 바로 달성(✅) 처리
+    return "✅" if spent >= effective_target else "❌"
+
 def compute_dashboard(cards_df: pd.DataFrame, tx_df: pd.DataFrame, month: str) -> pd.DataFrame:
     active_cards = cards_df[cards_df["active"] == True].copy()
     if active_cards.empty:
@@ -90,18 +100,18 @@ def compute_dashboard(cards_df: pd.DataFrame, tx_df: pd.DataFrame, month: str) -
 
     tx_m = tx_df[tx_df["month"] == month].copy() if not tx_df.empty else pd.DataFrame(columns=["card_id","amount"])
     if not tx_m.empty:
-        tx_m["amount"] = pd.to_numeric(tx_m["amount"], errors="coerce").fillna(0).astype(int)
+        tx_m["amount"] = to_int_series(tx_m["amount"])
         spent = tx_m.groupby("card_id", as_index=False)["amount"].sum().rename(columns={"amount":"spent"})
     else:
         spent = pd.DataFrame({"card_id": [], "spent": []})
 
     out = active_cards.merge(spent, on="card_id", how="left")
     out["spent"] = out["spent"].fillna(0).astype(int)
-    out["monthly_target"] = pd.to_numeric(out["monthly_target"], errors="coerce").fillna(0).astype(int)
-    out["fixed_cost"] = pd.to_numeric(out.get("fixed_cost", 0), errors="coerce").fillna(0).astype(int)
+    out["monthly_target"] = to_int_series(out["monthly_target"])
+    out["fixed_cost"] = to_int_series(out.get("fixed_cost", pd.Series([0] * len(out))))
     out["effective_target"] = (out["monthly_target"] - out["fixed_cost"]).clip(lower=0)
     out["remaining"] = (out["effective_target"] - out["spent"]).clip(lower=0)
-    out["status"] = out.apply(lambda r: "✅" if r["spent"] >= r["effective_target"] and r["effective_target"] > 0 else "❌", axis=1)
+    out["status"] = out.apply(lambda r: status_icon(r["spent"], r["effective_target"]), axis=1)
 
     # 숫자 포맷용 컬럼 생성 (표시용)
     out["목표 실적"] = out["monthly_target"].map(lambda x: f"{x:,}")
@@ -230,7 +240,7 @@ with tab2:
             # 표시용 컬럼 구성
             tx_view["카드"] = tx_view["card_id"].map(id_to_name).fillna(tx_view["card_id"].astype(str))
             tx_view["항목"] = tx_view["item"].astype(str)
-            tx_view["금액"] = pd.to_numeric(tx_view["amount"], errors="coerce").fillna(0).astype(int)
+            tx_view["금액"] = to_int_series(tx_view["amount"])
             tx_view["날짜"] = tx_view["date"].astype(str)
         
             # 삭제용 체크박스 컬럼
@@ -281,7 +291,7 @@ with tab2:
                 edited["month"] = edited["date"].map(lambda x: x[:7])
         
                 # 금액 정수화
-                edited["amount"] = pd.to_numeric(edited["금액"], errors="coerce").fillna(0).astype(int)
+                edited["amount"] = to_int_series(edited["금액"])
         
                 # item 반영
                 edited["item"] = edited["항목"].astype(str)
@@ -330,8 +340,8 @@ with tab3:
         st.info("등록된 카드가 없습니다.")
     else:
         edit_df = cards_df.copy()
-        edit_df["monthly_target"] = pd.to_numeric(edit_df["monthly_target"], errors="coerce").fillna(0).astype(int)
-        edit_df["fixed_cost"] = pd.to_numeric(edit_df["fixed_cost"], errors="coerce").fillna(0).astype(int)
+        edit_df["monthly_target"] = to_int_series(edit_df["monthly_target"])
+        edit_df["fixed_cost"] = to_int_series(edit_df["fixed_cost"])
         edited = st.data_editor(
             edit_df[["card_id","card_name","monthly_target","fixed_cost","active"]],
             use_container_width=True,
