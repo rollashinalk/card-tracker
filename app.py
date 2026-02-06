@@ -147,18 +147,20 @@ with tab2:
         card_map = dict(zip(active["card_name"], active["card_id"]))
         id_to_name = dict(zip(active["card_id"], active["card_name"]))
 
-        c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
-        with c1:
-            card_name = st.selectbox("카드", list(card_map.keys()), key="tx_card")
-        with c2:
-            amount = st.number_input("금액", step=1000, value=0, key="tx_amount")
-        with c3:
-            d = st.date_input("날짜", value=today, key="tx_date")
-        with c4:
-            item = st.text_input("항목", placeholder="예: 편의점 / 택시 / 점심 등 (선택)", key="tx_item")
+        with st.form("tx_add_form", clear_on_submit=True):
+            c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
+            with c1:
+                card_name = st.selectbox("카드", list(card_map.keys()), key="tx_card")
+            with c2:
+                amount = st.number_input("금액", step=1000, value=0, key="tx_amount")
+            with c3:
+                d = st.date_input("날짜", value=today, key="tx_date")
+            with c4:
+                item = st.text_input("항목", placeholder="예: 편의점 / 택시 / 점심 등 (선택)", key="tx_item")
 
-        # 저장 버튼
-        if st.button("추가", type="primary", use_container_width=True):
+            submitted = st.form_submit_button("추가", type="primary", use_container_width=True)
+
+        if submitted:
             if amount == 0:
                 st.warning("금액을 0이 아닌 값으로 입력해 주세요.")
             else:
@@ -170,11 +172,6 @@ with tab2:
                         tx_ws,
                         [str(uuid.uuid4()), d.isoformat(), m, card_map[card_name], int(amount), item.strip()]
                     )
-                    
-                    # 입력값 초기화(선택: 카드만 유지하고 싶으면 tx_card는 건드리지 마세요)
-                    st.session_state["tx_amount"] = 0
-                    st.session_state["tx_item"] = ""
-                    
                     st.rerun()
 
 
