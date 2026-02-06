@@ -2,7 +2,9 @@ import streamlit as st
 import pandas as pd
 import uuid
 from datetime import date, datetime
+import calendar
 from dateutil.relativedelta import relativedelta
+import holidays
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -55,12 +57,41 @@ def allowed_months(today: date):
     m_next = this_m + relativedelta(months=1)
     return [ym(m_prev), ym(this_m), ym(m_next)]
 
+def to_int_series(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(
+        series.astype(str).str.replace(",", "", regex=False).str.strip(),
+        errors="coerce",
+    ).fillna(0).astype(int)
+
 def cleanup_tx(tx_df: pd.DataFrame, allowed: list[str]) -> pd.DataFrame:
     if tx_df.empty:
         return tx_df
     # month 컬럼이 문자열이어야 함
     tx_df["month"] = tx_df["month"].astype(str)
     return tx_df[tx_df["month"].isin(allowed)].copy()
+
+
+def get_month_end_info(month: str) -> tuple[date, bool, str]:
+    year, mon = map(int, month.split("-"))
+    last_day = calendar.monthrange(year, mon)[1]
+    end_dt = date(year, mon, last_day)
+
+    kr_holidays = holidays.country_holidays("KR", years=[year])
+    is_weekend = end_dt.weekday() >= 5
+    is_holiday = end_dt in kr_holidays
+
+    if is_holiday:
+        reason = f"공휴일({kr_holidays.get(end_dt)})"
+    elif is_weekend:
+        reason = "주말"
+    else:
+        reason = "영업일"
+
+    return end_dt, (is_weekend or is_holiday), reason
+
+def status_icon(spent: int, effective_target: int) -> str:
+    # 고정비가 목표 이상인 경우 effective_target=0이므로 바로 달성(✅) 처리
+    return "✅" if spent >= effective_target else "❌"
 
 def compute_dashboard(cards_df: pd.DataFrame, tx_df: pd.DataFrame, month: str) -> pd.DataFrame:
     active_cards = cards_df[cards_df["active"] == True].copy()
@@ -69,24 +100,28 @@ def compute_dashboard(cards_df: pd.DataFrame, tx_df: pd.DataFrame, month: str) -
 
     tx_m = tx_df[tx_df["month"] == month].copy() if not tx_df.empty else pd.DataFrame(columns=["card_id","amount"])
     if not tx_m.empty:
-        tx_m["amount"] = pd.to_numeric(tx_m["amount"], errors="coerce").fillna(0).astype(int)
+        tx_m["amount"] = to_int_series(tx_m["amount"])
         spent = tx_m.groupby("card_id", as_index=False)["amount"].sum().rename(columns={"amount":"spent"})
     else:
         spent = pd.DataFrame({"card_id": [], "spent": []})
 
     out = active_cards.merge(spent, on="card_id", how="left")
     out["spent"] = out["spent"].fillna(0).astype(int)
-    out["monthly_target"] = pd.to_numeric(out["monthly_target"], errors="coerce").fillna(0).astype(int)
-    out["remaining"] = (out["monthly_target"] - out["spent"]).clip(lower=0)
-    out["status"] = out.apply(lambda r: "✅" if r["spent"] >= r["monthly_target"] and r["monthly_target"] > 0 else "❌", axis=1)
+    out["monthly_target"] = to_int_series(out["monthly_target"])
+    out["fixed_cost"] = to_int_series(out.get("fixed_cost", pd.Series([0] * len(out))))
+    out["effective_target"] = (out["monthly_target"] - out["fixed_cost"]).clip(lower=0)
+    out["remaining"] = (out["effective_target"] - out["spent"]).clip(lower=0)
+    out["status"] = out.apply(lambda r: status_icon(r["spent"], r["effective_target"]), axis=1)
 
     # 숫자 포맷용 컬럼 생성 (표시용)
     out["목표 실적"] = out["monthly_target"].map(lambda x: f"{x:,}")
+    out["고정비"] = out["fixed_cost"].map(lambda x: f"{x:,}")
+    out["실제 채워야 할 금액"] = out["effective_target"].map(lambda x: f"{x:,}")
     out["사용 금액"] = out["spent"].map(lambda x: f"{x:,}")
     out["남은 금액"] = out["remaining"].map(lambda x: f"{x:,}")
     
     return out[
-        ["card_name", "목표 실적", "사용 금액", "남은 금액", "status"]
+        ["card_name", "목표 실적", "고정비", "실제 채워야 할 금액", "사용 금액", "남은 금액", "status"]
     ].rename(columns={"card_name": "카드명", "status": "상태"}).sort_values(
         ["상태", "남은 금액", "카드명"]
     )
@@ -114,9 +149,12 @@ if "active" in cards_df.columns:
 
 # 빈 시트 대비(최초 실행)
 if cards_df.empty:
-    cards_df = pd.DataFrame(columns=["card_id","card_name","monthly_target","active"])
+    cards_df = pd.DataFrame(columns=["card_id","card_name","monthly_target","fixed_cost","active"])
 if tx_df.empty:
     tx_df = pd.DataFrame(columns=["tx_id","date","month","card_id","amount"])
+
+if "fixed_cost" not in cards_df.columns:
+    cards_df["fixed_cost"] = 0
 
 today = date.today()
 months = allowed_months(today)
@@ -133,6 +171,14 @@ tab1, tab2, tab3 = st.tabs(["대시보드", "결제 입력", "카드 관리"])
 
 with tab1:
     sel_month = st.selectbox("월 선택", months, index=1)
+    month_end, is_shift_risk, reason = get_month_end_info(sel_month)
+    if is_shift_risk:
+        st.warning(
+            f"{sel_month} 말일({month_end.isoformat()})은 {reason}입니다. "
+            "말일 고정비가 다음 달로 이월될 수 있으니, 결제 입력에서 수동 조정(-/+)을 반영해 주세요."
+        )
+    else:
+        st.caption(f"{sel_month} 말일({month_end.isoformat()})은 {reason}입니다.")
     dash = compute_dashboard(cards_df, tx_df, sel_month)
     st.dataframe(dash, use_container_width=True)
 
@@ -147,18 +193,20 @@ with tab2:
         card_map = dict(zip(active["card_name"], active["card_id"]))
         id_to_name = dict(zip(active["card_id"], active["card_name"]))
 
-        c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
-        with c1:
-            card_name = st.selectbox("카드", list(card_map.keys()), key="tx_card")
-        with c2:
-            amount = st.number_input("금액", step=1000, value=0, key="tx_amount")
-        with c3:
-            d = st.date_input("날짜", value=today, key="tx_date")
-        with c4:
-            item = st.text_input("항목", placeholder="예: 편의점 / 택시 / 점심 등 (선택)", key="tx_item")
+        with st.form("tx_add_form", clear_on_submit=True):
+            c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
+            with c1:
+                card_name = st.selectbox("카드", list(card_map.keys()), key="tx_card")
+            with c2:
+                amount = st.number_input("금액", step=1000, value=0, key="tx_amount")
+            with c3:
+                d = st.date_input("날짜", value=today, key="tx_date")
+            with c4:
+                item = st.text_input("항목", placeholder="예: 편의점 / 택시 / 점심 등 (선택)", key="tx_item")
 
-        # 저장 버튼
-        if st.button("추가", type="primary", use_container_width=True):
+            submitted = st.form_submit_button("추가", type="primary", use_container_width=True)
+
+        if submitted:
             if amount == 0:
                 st.warning("금액을 0이 아닌 값으로 입력해 주세요.")
             else:
@@ -170,11 +218,6 @@ with tab2:
                         tx_ws,
                         [str(uuid.uuid4()), d.isoformat(), m, card_map[card_name], int(amount), item.strip()]
                     )
-                    
-                    # 입력값 초기화(선택: 카드만 유지하고 싶으면 tx_card는 건드리지 마세요)
-                    st.session_state["tx_amount"] = 0
-                    st.session_state["tx_item"] = ""
-                    
                     st.rerun()
 
 
@@ -197,7 +240,7 @@ with tab2:
             # 표시용 컬럼 구성
             tx_view["카드"] = tx_view["card_id"].map(id_to_name).fillna(tx_view["card_id"].astype(str))
             tx_view["항목"] = tx_view["item"].astype(str)
-            tx_view["금액"] = pd.to_numeric(tx_view["amount"], errors="coerce").fillna(0).astype(int)
+            tx_view["금액"] = to_int_series(tx_view["amount"])
             tx_view["날짜"] = tx_view["date"].astype(str)
         
             # 삭제용 체크박스 컬럼
@@ -248,7 +291,7 @@ with tab2:
                 edited["month"] = edited["date"].map(lambda x: x[:7])
         
                 # 금액 정수화
-                edited["amount"] = pd.to_numeric(edited["금액"], errors="coerce").fillna(0).astype(int)
+                edited["amount"] = to_int_series(edited["금액"])
         
                 # item 반영
                 edited["item"] = edited["항목"].astype(str)
@@ -276,16 +319,18 @@ with tab3:
     st.subheader("카드 관리")
     # 카드 추가
     with st.expander("카드 추가", expanded=True):
-        c1, c2 = st.columns([3,2])
+        c1, c2, c3 = st.columns([3, 2, 2])
         with c1:
             new_name = st.text_input("카드명")
         with c2:
             new_target = st.number_input("목표 실적(월)", min_value=0, step=10000, value=300000)
+        with c3:
+            new_fixed_cost = st.number_input("고정비(월)", min_value=0, step=1000, value=0)
         if st.button("카드 추가", use_container_width=True):
             if not new_name.strip():
                 st.warning("카드명을 입력해 주세요.")
             else:
-                append_row(cards_ws, [str(uuid.uuid4()), new_name.strip(), int(new_target), True])
+                append_row(cards_ws, [str(uuid.uuid4()), new_name.strip(), int(new_target), int(new_fixed_cost), True])
                 st.success("카드가 추가되었습니다.")
                 st.rerun()
 
@@ -295,12 +340,17 @@ with tab3:
         st.info("등록된 카드가 없습니다.")
     else:
         edit_df = cards_df.copy()
-        edit_df["monthly_target"] = pd.to_numeric(edit_df["monthly_target"], errors="coerce").fillna(0).astype(int)
+        edit_df["monthly_target"] = to_int_series(edit_df["monthly_target"])
+        edit_df["fixed_cost"] = to_int_series(edit_df["fixed_cost"])
         edited = st.data_editor(
-            edit_df[["card_id","card_name","monthly_target","active"]],
+            edit_df[["card_id","card_name","monthly_target","fixed_cost","active"]],
             use_container_width=True,
             disabled=["card_id"],
-            hide_index=True
+            hide_index=True,
+            column_config={
+                "monthly_target": st.column_config.NumberColumn("monthly_target", min_value=0, step=10000),
+                "fixed_cost": st.column_config.NumberColumn("fixed_cost", min_value=0, step=1000),
+            },
         )
         if st.button("변경사항 저장", use_container_width=True):
             update_ws_from_df(cards_ws, edited)
