@@ -127,6 +127,30 @@ def compute_dashboard(cards_df: pd.DataFrame, tx_df: pd.DataFrame, month: str) -
     )
 
 
+def style_dashboard(dash: pd.DataFrame):
+    def parse_money(v) -> int:
+        try:
+            return int(str(v).replace(",", "").strip())
+        except Exception:
+            return 0
+
+    def remaining_style(v: str) -> str:
+        amount = parse_money(v)
+        if amount == 0:
+            bg = "#d1fae5"
+            fg = "#065f46"
+        elif amount <= 50000:
+            bg = "#fef3c7"
+            fg = "#92400e"
+        else:
+            bg = "#fee2e2"
+            fg = "#991b1b"
+
+        return f"font-weight: 700; background-color: {bg}; color: {fg};"
+
+    return dash.style.map(remaining_style, subset=["남은 금액"])
+
+
 # -----------------------------
 # UI
 # -----------------------------
@@ -182,7 +206,7 @@ with tab1:
     else:
         st.caption(f"{sel_month} 말일({month_end.isoformat()})은 {reason}입니다.")
     dash = compute_dashboard(cards_df, tx_df, sel_month)
-    st.dataframe(dash, use_container_width=True)
+    st.dataframe(style_dashboard(dash), use_container_width=True)
 
 with tab2:
     st.subheader("결제 내역 추가(실적 포함만)")
