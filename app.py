@@ -149,13 +149,13 @@ with tab2:
 
         c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
         with c1:
-            card_name = st.selectbox("카드", list(card_map.keys()))
+            card_name = st.selectbox("카드", list(card_map.keys()), key="tx_card")
         with c2:
-            amount = st.number_input("금액", min_value=0, step=1000, value=0)
+            amount = st.number_input("금액", min_value=0, step=1000, value=0, key="tx_amount")
         with c3:
-            d = st.date_input("날짜", value=today)
+            d = st.date_input("날짜", value=today, key="tx_date")
         with c4:
-            item = st.text_input("항목", placeholder="예: 편의점 / 택시 / 점심 등 (선택)")
+            item = st.text_input("항목", placeholder="예: 편의점 / 택시 / 점심 등 (선택)", key="tx_item")
 
         # 저장 버튼
         if st.button("추가", type="primary", use_container_width=True):
@@ -170,38 +170,107 @@ with tab2:
                         tx_ws,
                         [str(uuid.uuid4()), d.isoformat(), m, card_map[card_name], int(amount), item.strip()]
                     )
+                    
+                    # 입력값 초기화(선택: 카드만 유지하고 싶으면 tx_card는 건드리지 마세요)
+                    st.session_state["tx_amount"] = 0
+                    st.session_state["tx_item"] = ""
+                    
                     st.rerun()
+
 
         st.divider()
 
-        # 📌 해당 월 히스토리 표
-        # 대시보드와 같은 월 선택 기준(기본: 이번달)
+        st.subheader("히스토리 (편집/삭제)")
+        
         sel_month_tx = st.selectbox("히스토리 월", months, index=1, key="tx_month")
-
+        
         tx_view = tx_df.copy()
         if "item" not in tx_view.columns:
             tx_view["item"] = ""
-
+        
         tx_view["month"] = tx_view["month"].astype(str)
         tx_view = tx_view[tx_view["month"] == sel_month_tx].copy()
-
+        
         if tx_view.empty:
             st.info("해당 월에 입력된 내역이 없습니다.")
         else:
+            # 표시용 컬럼 구성
             tx_view["카드"] = tx_view["card_id"].map(id_to_name).fillna(tx_view["card_id"].astype(str))
             tx_view["항목"] = tx_view["item"].astype(str)
-            tx_view["금액"] = pd.to_numeric(tx_view["amount"], errors="coerce").fillna(0).astype(int).map(lambda x: f"{x:,}")
+            tx_view["금액"] = pd.to_numeric(tx_view["amount"], errors="coerce").fillna(0).astype(int)
             tx_view["날짜"] = tx_view["date"].astype(str)
-
-            # 날짜 내림차순(최근 먼저)
-            tx_view = tx_view.sort_values(["날짜"], ascending=False)
-
-            st.dataframe(
-                tx_view[["날짜", "카드", "항목", "금액"]],
+        
+            # 삭제용 체크박스 컬럼
+            tx_view["삭제"] = False
+        
+            # 사용자가 편집하는 표(보이는 컬럼만)
+            editor_df = tx_view[["tx_id", "날짜", "카드", "항목", "금액", "삭제"]].copy()
+        
+            edited = st.data_editor(
+                editor_df,
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                disabled=["tx_id"],  # 행 식별자 보호
+                column_config={
+                    "tx_id": st.column_config.TextColumn("tx_id", help="내부 식별자", width="small"),
+                    "날짜": st.column_config.TextColumn("날짜"),
+                    "카드": st.column_config.SelectboxColumn("카드", options=list(card_map.keys())),
+                    "항목": st.column_config.TextColumn("항목"),
+                    "금액": st.column_config.NumberColumn("금액", min_value=0, step=1000),
+                    "삭제": st.column_config.CheckboxColumn("삭제"),
+                },
+                key="tx_editor",
             )
-
+        
+            # 저장 버튼
+            if st.button("히스토리 변경사항 저장", use_container_width=True):
+                # 1) 삭제 처리
+                edited = edited[edited["삭제"] == False].copy()
+        
+                # 2) tx_df 원본 형태로 되돌리기(card_id 매핑 등)
+                # 카드명 -> card_id
+                name_to_id = dict(zip(active["card_name"], active["card_id"]))
+                edited["card_id"] = edited["카드"].map(name_to_id)
+        
+                # 날짜 검증: ISO 형태로 통일(YYYY-MM-DD)
+                def normalize_date(s):
+                    try:
+                        return pd.to_datetime(s).date().isoformat()
+                    except Exception:
+                        return None
+        
+                edited["date"] = edited["날짜"].map(normalize_date)
+                if edited["date"].isna().any():
+                    st.error("날짜 형식이 잘못된 행이 있습니다. 예: 2026-02-07 형태로 입력해 주세요.")
+                    st.stop()
+        
+                # month 재계산
+                edited["month"] = edited["date"].map(lambda x: x[:7])
+        
+                # 금액 정수화
+                edited["amount"] = pd.to_numeric(edited["금액"], errors="coerce").fillna(0).astype(int)
+        
+                # item 반영
+                edited["item"] = edited["항목"].astype(str)
+        
+                # 3) 같은 달의 tx를 전부 교체(간단하고 안전)
+                tx_all = tx_df.copy()
+                tx_all["month"] = tx_all["month"].astype(str)
+        
+                # 선택된 달 rows 제거 후, edited rows 삽입
+                tx_all = tx_all[tx_all["month"] != sel_month_tx].copy()
+        
+                to_write = edited[["tx_id", "date", "month", "card_id", "amount", "item"]].copy()
+                tx_all = pd.concat([tx_all, to_write], ignore_index=True)
+        
+                # 4) 3개월 유지 룰 재적용(혹시 편집으로 벗어나도 삭제)
+                tx_all = cleanup_tx(tx_all, months)
+        
+                # 5) 시트에 반영
+                update_ws_from_df(tx_ws, tx_all)
+        
+                # 6) 바로 갱신
+                st.rerun()
 
 with tab3:
     st.subheader("카드 관리")
