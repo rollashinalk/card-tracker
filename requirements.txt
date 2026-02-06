@@ -3,3 +3,5 @@ pandas
 gspread
 google-auth
 python-dateutil
+
+holidays
