@@ -121,8 +121,8 @@ def compute_dashboard(cards_df: pd.DataFrame, tx_df: pd.DataFrame, month: str) -
     out["남은 금액"] = out["remaining"].map(lambda x: f"{x:,}")
     
     return out[
-        ["card_name", "목표 실적", "고정비", "실제 채워야 할 금액", "사용 금액", "남은 금액", "status"]
-    ].rename(columns={"card_name": "카드명", "status": "상태"}).sort_values(
+        ["card_name", "memo", "목표 실적", "고정비", "실제 채워야 할 금액", "사용 금액", "남은 금액", "status"]
+    ].rename(columns={"card_name": "카드명", "memo": "메모", "status": "상태"}).sort_values(
         ["상태", "남은 금액", "카드명"]
     )
 
@@ -149,12 +149,14 @@ if "active" in cards_df.columns:
 
 # 빈 시트 대비(최초 실행)
 if cards_df.empty:
-    cards_df = pd.DataFrame(columns=["card_id","card_name","monthly_target","fixed_cost","active"])
+    cards_df = pd.DataFrame(columns=["card_id","card_name","monthly_target","fixed_cost","memo","active"])
 if tx_df.empty:
     tx_df = pd.DataFrame(columns=["tx_id","date","month","card_id","amount"])
 
 if "fixed_cost" not in cards_df.columns:
     cards_df["fixed_cost"] = 0
+if "memo" not in cards_df.columns:
+    cards_df["memo"] = ""
 
 today = date.today()
 months = allowed_months(today)
@@ -319,18 +321,20 @@ with tab3:
     st.subheader("카드 관리")
     # 카드 추가
     with st.expander("카드 추가", expanded=True):
-        c1, c2, c3 = st.columns([3, 2, 2])
+        c1, c2, c3, c4 = st.columns([3, 2, 2, 3])
         with c1:
             new_name = st.text_input("카드명")
         with c2:
             new_target = st.number_input("목표 실적(월)", min_value=0, step=10000, value=300000)
         with c3:
             new_fixed_cost = st.number_input("고정비(월)", min_value=0, step=1000, value=0)
+        with c4:
+            new_memo = st.text_input("메모", placeholder="예: 통신비, OTT, 정기구독")
         if st.button("카드 추가", use_container_width=True):
             if not new_name.strip():
                 st.warning("카드명을 입력해 주세요.")
             else:
-                append_row(cards_ws, [str(uuid.uuid4()), new_name.strip(), int(new_target), int(new_fixed_cost), True])
+                append_row(cards_ws, [str(uuid.uuid4()), new_name.strip(), int(new_target), int(new_fixed_cost), new_memo.strip(), True])
                 st.success("카드가 추가되었습니다.")
                 st.rerun()
 
@@ -342,14 +346,16 @@ with tab3:
         edit_df = cards_df.copy()
         edit_df["monthly_target"] = to_int_series(edit_df["monthly_target"])
         edit_df["fixed_cost"] = to_int_series(edit_df["fixed_cost"])
+        edit_df["memo"] = edit_df["memo"].fillna("").astype(str)
         edited = st.data_editor(
-            edit_df[["card_id","card_name","monthly_target","fixed_cost","active"]],
+            edit_df[["card_id","card_name","monthly_target","fixed_cost","memo","active"]],
             use_container_width=True,
             disabled=["card_id"],
             hide_index=True,
             column_config={
                 "monthly_target": st.column_config.NumberColumn("monthly_target", min_value=0, step=10000),
                 "fixed_cost": st.column_config.NumberColumn("fixed_cost", min_value=0, step=1000),
+                "memo": st.column_config.TextColumn("memo"),
             },
         )
         if st.button("변경사항 저장", use_container_width=True):
