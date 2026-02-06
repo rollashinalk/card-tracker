@@ -138,31 +138,70 @@ with tab1:
 
 with tab2:
     st.subheader("결제 내역 추가(실적 포함만)")
-    active = cards_df[cards_df.get("active", True) == True].copy()
+
+    # 활성 카드 목록
+    active = cards_df[cards_df["active"] == True].copy() if "active" in cards_df.columns else cards_df.copy()
     if active.empty:
         st.info("먼저 '카드 관리'에서 카드를 추가해 주세요.")
     else:
         card_map = dict(zip(active["card_name"], active["card_id"]))
-        c1, c2, c3 = st.columns([2,2,2])
+        id_to_name = dict(zip(active["card_id"], active["card_name"]))
+
+        c1, c2, c3, c4 = st.columns([2, 2, 2, 3])
         with c1:
             card_name = st.selectbox("카드", list(card_map.keys()))
         with c2:
             amount = st.number_input("금액", min_value=0, step=1000, value=0)
         with c3:
             d = st.date_input("날짜", value=today)
+        with c4:
+            item = st.text_input("항목", placeholder="예: 편의점 / 택시 / 점심 등 (선택)")
 
+        # 저장 버튼
         if st.button("추가", type="primary", use_container_width=True):
             if amount <= 0:
                 st.warning("금액을 1원 이상 입력해 주세요.")
             else:
                 m = ym(d.replace(day=1))
-                # 허용 월 밖은 즉시 차단(요구사항: 3개월만 유지)
                 if m not in months:
                     st.error("허용 기간(이번달-1 ~ 이번달+1) 밖의 날짜는 입력할 수 없습니다.")
                 else:
-                    append_row(tx_ws, [str(uuid.uuid4()), d.isoformat(), m, card_map[card_name], int(amount)])
-                    st.success("추가되었습니다. 대시보드가 자동 갱신됩니다.")
+                    append_row(
+                        tx_ws,
+                        [str(uuid.uuid4()), d.isoformat(), m, card_map[card_name], int(amount), item.strip()]
+                    )
                     st.rerun()
+
+        st.divider()
+
+        # 📌 해당 월 히스토리 표
+        # 대시보드와 같은 월 선택 기준(기본: 이번달)
+        sel_month_tx = st.selectbox("히스토리 월", months, index=1, key="tx_month")
+
+        tx_view = tx_df.copy()
+        if "item" not in tx_view.columns:
+            tx_view["item"] = ""
+
+        tx_view["month"] = tx_view["month"].astype(str)
+        tx_view = tx_view[tx_view["month"] == sel_month_tx].copy()
+
+        if tx_view.empty:
+            st.info("해당 월에 입력된 내역이 없습니다.")
+        else:
+            tx_view["카드"] = tx_view["card_id"].map(id_to_name).fillna(tx_view["card_id"].astype(str))
+            tx_view["항목"] = tx_view["item"].astype(str)
+            tx_view["금액"] = pd.to_numeric(tx_view["amount"], errors="coerce").fillna(0).astype(int).map(lambda x: f"{x:,}")
+            tx_view["날짜"] = tx_view["date"].astype(str)
+
+            # 날짜 내림차순(최근 먼저)
+            tx_view = tx_view.sort_values(["날짜"], ascending=False)
+
+            st.dataframe(
+                tx_view[["날짜", "카드", "항목", "금액"]],
+                use_container_width=True,
+                hide_index=True
+            )
+
 
 with tab3:
     st.subheader("카드 관리")
