@@ -83,10 +83,6 @@ def get_month_end_info(month: str) -> tuple[date, bool, str]:
 
     return end_dt, (is_weekend or is_holiday), reason
 
-def status_icon(spent: int, effective_target: int) -> str:
-    # 고정비가 목표 이상인 경우 effective_target=0이므로 바로 달성(✅) 처리
-    return "✅" if spent >= effective_target else "❌"
-
 def compute_dashboard(cards_df: pd.DataFrame, tx_df: pd.DataFrame, month: str) -> pd.DataFrame:
     active_cards = cards_df[cards_df["active"] == True].copy()
     if active_cards.empty:
@@ -105,7 +101,7 @@ def compute_dashboard(cards_df: pd.DataFrame, tx_df: pd.DataFrame, month: str) -
     out["fixed_cost"] = pd.to_numeric(out.get("fixed_cost", 0), errors="coerce").fillna(0).astype(int)
     out["effective_target"] = (out["monthly_target"] - out["fixed_cost"]).clip(lower=0)
     out["remaining"] = (out["effective_target"] - out["spent"]).clip(lower=0)
-    out["status"] = out.apply(lambda r: status_icon(r["spent"], r["effective_target"]), axis=1)
+    out["status"] = out.apply(lambda r: "✅" if r["spent"] >= r["effective_target"] and r["effective_target"] > 0 else "❌", axis=1)
 
     # 숫자 포맷용 컬럼 생성 (표시용)
     out["목표 실적"] = out["monthly_target"].map(lambda x: f"{x:,}")
