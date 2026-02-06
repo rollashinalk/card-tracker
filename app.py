@@ -137,16 +137,22 @@ def style_dashboard(dash: pd.DataFrame):
     def remaining_style(v: str) -> str:
         amount = parse_money(v)
         if amount == 0:
-            bg = "#d1fae5"
-            fg = "#065f46"
+            bg = "#123127"
+            fg = "#a7f3d0"
+            border = "#34d399"
         elif amount <= 50000:
-            bg = "#fef3c7"
-            fg = "#92400e"
+            bg = "#3a3116"
+            fg = "#fde68a"
+            border = "#fbbf24"
         else:
-            bg = "#fee2e2"
-            fg = "#991b1b"
+            bg = "#3a1f1f"
+            fg = "#fecaca"
+            border = "#f87171"
 
-        return f"font-weight: 700; background-color: {bg}; color: {fg};"
+        return (
+            f"font-weight: 700; background-color: {bg}; color: {fg}; "
+            f"border-left: 0.35rem solid {border};"
+        )
 
     return dash.style.map(remaining_style, subset=["남은 금액"])
 
