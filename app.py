@@ -92,6 +92,16 @@ cards_ws, tx_ws = get_worksheets()
 cards_df = ws_to_df(cards_ws)
 tx_df = ws_to_df(tx_ws)
 
+# active 컬럼 정규화 (문자열/숫자 → Boolean)
+if "active" in cards_df.columns:
+    cards_df["active"] = (
+        cards_df["active"]
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        .isin(["TRUE", "1", "YES", "Y"])
+    )
+
 # 빈 시트 대비(최초 실행)
 if cards_df.empty:
     cards_df = pd.DataFrame(columns=["card_id","card_name","monthly_target","active"])
