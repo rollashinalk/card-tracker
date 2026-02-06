@@ -80,16 +80,16 @@ def compute_dashboard(cards_df: pd.DataFrame, tx_df: pd.DataFrame, month: str) -
     out["remaining"] = (out["monthly_target"] - out["spent"]).clip(lower=0)
     out["status"] = out.apply(lambda r: "✅" if r["spent"] >= r["monthly_target"] and r["monthly_target"] > 0 else "❌", axis=1)
 
-# 숫자 포맷용 컬럼 생성 (표시용)
-out["목표 실적"] = out["monthly_target"].map(lambda x: f"{x:,}")
-out["사용 금액"] = out["spent"].map(lambda x: f"{x:,}")
-out["남은 금액"] = out["remaining"].map(lambda x: f"{x:,}")
-
-return out[
-    ["card_name", "목표 실적", "사용 금액", "남은 금액", "status"]
-].rename(columns={"card_name": "카드명", "status": "상태"}).sort_values(
-    ["상태", "남은 금액", "카드명"]
-)
+    # 숫자 포맷용 컬럼 생성 (표시용)
+    out["목표 실적"] = out["monthly_target"].map(lambda x: f"{x:,}")
+    out["사용 금액"] = out["spent"].map(lambda x: f"{x:,}")
+    out["남은 금액"] = out["remaining"].map(lambda x: f"{x:,}")
+    
+    return out[
+        ["card_name", "목표 실적", "사용 금액", "남은 금액", "status"]
+    ].rename(columns={"card_name": "카드명", "status": "상태"}).sort_values(
+        ["상태", "남은 금액", "카드명"]
+    )
 
 
 # -----------------------------
