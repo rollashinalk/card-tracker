@@ -6,6 +6,7 @@ from dateutil.relativedelta import relativedelta
 
 import gspread
 from google.oauth2.service_account import Credentials
+import json
 
 # -----------------------------
 # Google Sheets helpers
@@ -16,8 +17,10 @@ SCOPES = [
 ]
 
 def get_client():
-    # Streamlit Cloud에서는 st.secrets["gcp_service_account"]에 JSON을 넣습니다.
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
+    creds = Credentials.from_service_account_info(
+        json.loads(st.secrets["gcp_service_account"]),
+        scopes=SCOPES
+    )
     return gspread.authorize(creds)
 
 @st.cache_resource
